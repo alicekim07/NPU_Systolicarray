@@ -62,5 +62,6 @@
 `define WRITE_BACK_PARAM   5'b10000 // 10
 `define SET_CTRL           5'b10001 // 11
 `define CLEAR_CTRL         5'b10010 // 12
+`define RESET              5'b10011 // 13
 
 `define DEBUG_MODE     1'b1

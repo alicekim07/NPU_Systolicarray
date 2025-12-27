@@ -397,9 +397,25 @@
 	// User Interface //
 	////////////////////
 
+	// Local Reset signal
+	reg [1:0] rst_cnt;
+
+	always @(posedge S_AXI_ACLK) begin
+		if (!S_AXI_ARESETN) begin
+			rst_cnt <= 2'd3;
+		end else if (instr_pulse_q && instr_bus_q == 32'hFFFFFFFF) begin
+			rst_cnt <= 2'd3;
+		end else if (rst_cnt != 2'd0) begin
+			rst_cnt <= rst_cnt - 1'b1;
+		end
+	end
+
+	assign localrst = (rst_cnt == 0);
+
+	// Top Module Instance
 	top top (
 		.CLK            (S_AXI_ACLK),
-		.RSTb           (S_AXI_ARESETN),
+		.RSTb           (localrst),
 		.i_Instr_In     (instr_bus_q),    // ★ 고정 버스
 		.i_instr_pulse  (instr_pulse_q),  // ★ 1사이클 펄스
 		.instr_stall    (instr_stall),

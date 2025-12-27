@@ -149,7 +149,8 @@ module systolic_ctrl(
         //
         reg [`BIT_DATA-1:0] Param_BASE_WSRAM_q, Param_BASE_WSRAM_d;
         reg [`BIT_DATA-1:0] Param_BASE_WSRAM_WH_q, Param_BASE_WSRAM_WH_d;
-
+        //
+        reg instr_seen_q, instr_seen_d;
     // # endregion
 
     // 3) 출력 포트 연결은 항상 _q 쪽으로
@@ -198,7 +199,7 @@ module systolic_ctrl(
     // # endregion
     // 4) 파생 신호(콤비)
     // # region Derived Signals
-        assign instr_stall = (state_q != `FETCH);
+        assign instr_stall = (instr_seen_d || instr_seen_q);
         assign weight_to_systolic_sel = (load_cnt_q < Run_IC_q+1) ? 1'b1 : 1'b0; // Weight to systolic array
         assign Base_W_full = {Param_BASE_WSRAM_WH_q[`BIT_DATA-1:0], Param_BASE_WSRAM_q[`BIT_DATA-1:0]};
     // # endregion
@@ -278,6 +279,11 @@ module systolic_ctrl(
                 Param_BASE_WSRAM_WH_d = Param_BASE_WSRAM_WH_q;
                 //
                 instr_reg_d = instr_reg_q;
+                //
+                instr_seen_d = instr_seen_q;
+                if (instr_pulse) begin
+                    instr_seen_d = 1'b1;
+                end
             // # endregion
             // # region Default derived signals
                 oc_mask = {`PE_COL{1'b0}};
@@ -295,12 +301,12 @@ module systolic_ctrl(
                     state_d = `STABLIZE;
                 end
                 `STABLIZE: begin
-                    if (instr_pulse) begin
+                    if (instr_seen_q) begin
                         previous_state_d = `STABLIZE;
                         state_d = `DECODE;
                     end else begin
-                        previous_state_d = `STABLIZE;
-                        state_d = `DECODE;
+                        // previous_state_d = `STABLIZE;
+                        state_d = `STABLIZE;
                         //state_d = `FETCH;
                     end
                 end
@@ -312,7 +318,7 @@ module systolic_ctrl(
                     previous_state_d = `EXECUTE;
                     if (opvalid_q) begin
                         case (opcode_q)
-                            `OPCODE_NOP:       state_d = `FETCH;
+                            `OPCODE_NOP:       state_d = `RESET;
                             `OPCODE_PARAM:     state_d = `PARAM_SET;
                             `OPCODE_LDSRAM: begin
                                 if (Param_TRG_q == `TRG_PSRAM) begin
@@ -329,23 +335,23 @@ module systolic_ctrl(
                             end
                             `OPCODE_WBPSRAM: state_d = `WRITE_BACK;
                             `OPCODE_WBPARAM: state_d = `WRITE_BACK_PARAM;
-                            default:         state_d = `IDLE;
+                            default:         state_d = `RESET;
                         endcase
                     end else begin
-                        state_d = `FETCH;
+                        state_d = `RESET;
                     end
                 end
                 `PARAM_SET: begin
                     previous_state_d = `PARAM_SET;
-                    state_d = `FETCH;
+                    state_d = `RESET;
                 end
                 `WRITE_SRAM: begin
                     previous_state_d = `WRITE_SRAM;
-                    state_d = (Param_TRG_q == `TRG_PSRAM) ? `CLEAR_CTRL : `FETCH;
+                    state_d = (Param_TRG_q == `TRG_PSRAM) ? `CLEAR_CTRL : `RESET;
                 end
                 `READ_SRAM: begin
                     previous_state_d = `READ_SRAM;
-                    state_d = `FETCH;
+                    state_d = `RESET;
                 end
                 `INIT_PSUM: begin
                     previous_state_d = `INIT_PSUM;
@@ -369,7 +375,7 @@ module systolic_ctrl(
                         state_d = `RUN;
                     end else begin
                         if (Next_IC_q == 0 && Next_OC_q == 0) begin
-                            state_d = `FETCH;
+                            state_d = `RESET;
                         end else begin
                             state_d = `SET;
                         end
@@ -392,12 +398,12 @@ module systolic_ctrl(
                     if (wb_valid_cnt_q < (WB_VALID_HOLD_CYCLES - 1)) begin
                         state_d = `WRITE_BACK_OUTPUT;
                     end else begin
-                        state_d = `FETCH;
+                        state_d = `RESET;
                     end
                 end
                 `WRITE_BACK_PARAM: begin
                     previous_state_d = `WRITE_BACK_PARAM;
-                    state_d = `FETCH;
+                    state_d = `RESET;
                 end
                 `SET_CTRL: begin
                     previous_state_d = `SET_CTRL;
@@ -408,10 +414,14 @@ module systolic_ctrl(
                     if (previous_state_q == `INIT_PSUM) begin
                         state_d = `SET;
                     end else begin
-                        state_d = `FETCH;
+                        state_d = `RESET;
                     end
                 end
-                default: state_d = `IDLE;
+                `RESET: begin
+                    previous_state_d = `RESET;
+                    state_d = `FETCH;
+                end
+                default: state_d = `RESET;
             endcase
             // 2. Output/Action Logic
             case (state_q)
@@ -423,6 +433,7 @@ module systolic_ctrl(
                     sram_weight_en_d = 0; // Disable Weight SRAM
                     sram_weight_we_d = 0; // Disable write to Weight SRAM
                     
+                    // instr_seen_d = 1'b0;
                 end
                 `STABLIZE: begin
                     // if (instr_pulse) begin
@@ -438,6 +449,8 @@ module systolic_ctrl(
                     sel_d = instr_reg_q[`BIT_DATA + `BIT_ADDR +: `BIT_SEL]; // Extract select bits from instruction
                     addr_d = instr_reg_q[`BIT_DATA +: `BIT_ADDR]; // Extract address from instruction
                     data_d = instr_reg_q[0 +: `BIT_DATA]; // Extract data from instruction
+
+                    // instr_seen_d = 1'b0;
                 end
                 `EXECUTE: begin
                     if (opvalid_q) begin
@@ -753,6 +766,9 @@ module systolic_ctrl(
                 `CLEAR_CTRL: begin
                     psum_sel_ctrl_d = 1'b0; // Disable Psum SRAM control
                 end
+                `RESET: begin
+                    instr_seen_d = 1'b0; // Clear instruction seen flag
+                end
                 default: begin
                     // Default case, do nothing or reset outputs as needed
                 end
@@ -836,6 +852,10 @@ module systolic_ctrl(
                 Param_BASE_WSRAM_q <= 0;
                 Param_BASE_WSRAM_WH_q <= 0;
 
+                // 
+                instr_seen_q <= 1'b0;
+
+                
             end else begin
                 // 동기식 상태 갱신
                 Flag_Finish_Out_q <= Flag_Finish_Out_d;
@@ -892,6 +912,8 @@ module systolic_ctrl(
                 Param_BASE_WSRAM_q <= Param_BASE_WSRAM_d;
                 Param_BASE_WSRAM_WH_q <= Param_BASE_WSRAM_WH_d;
 
+                //
+                instr_seen_q <= instr_seen_d;
             end
         end
     // # endregion
